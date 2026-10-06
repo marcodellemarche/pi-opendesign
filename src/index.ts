@@ -144,9 +144,14 @@ class OdMcpClient {
     if (this.child) return;
     if (this.starting) return this.starting;
 
+    // Hold the child in a local as well, so the catch below can kill exactly
+    // the process this attempt spawned even after this.child is cleared.
+    let spawned: ChildProcessWithoutNullStreams | undefined;
+
     this.starting = (async () => {
       const { command, args } = resolveOdCommand();
       const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+      spawned = child;
       this.child = child;
 
       child.stdout.setEncoding("utf8");
@@ -186,7 +191,7 @@ class OdMcpClient {
       await this.starting;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
-      this.child?.kill();
+      spawned?.kill();
       this.child = undefined;
       this.starting = undefined;
       throw error;
@@ -730,11 +735,15 @@ export default function openDesignExtension(pi: ExtensionAPI) {
         return;
       }
 
-      if (value === "none" || value === "clear") delete prefs[key];
-      else prefs[key] = value;
+      // The command key and the preference field differ, so map explicitly.
+      const field: keyof Preferences =
+        key === "project" ? "defaultProject" : "defaultDesignSystem";
+      const clearing = value === "none" || value === "clear";
+      if (clearing) delete prefs[field];
+      else prefs[field] = value;
 
       // Validate before persisting so a typo cannot redirect every later run.
-      if (key === "project" && prefs.defaultProject) {
+      if (field === "defaultProject" && prefs.defaultProject) {
         try {
           prefs.defaultProject = await resolveProjectId(prefs.defaultProject);
         } catch (error) {
@@ -749,7 +758,7 @@ export default function openDesignExtension(pi: ExtensionAPI) {
       try {
         await writeFile(PREFS_PATH, `${JSON.stringify(prefs, null, 2)}\n`, "utf8");
         prefsCache = prefs;
-        ctx.ui.notify(`OpenDesign ${key} set to ${prefs[key] ?? "(cleared)"}`, "info");
+        ctx.ui.notify(`OpenDesign ${key} set to ${prefs[field] ?? "(cleared)"}`, "info");
       } catch (error) {
         ctx.ui.notify(
           `Could not write ${PREFS_PATH}: ${error instanceof Error ? error.message : String(error)}`,
