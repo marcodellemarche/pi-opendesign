@@ -144,15 +144,18 @@ class OdMcpClient {
     if (this.child) return;
     if (this.starting) return this.starting;
 
-    // Hold the child in a local as well, so the catch below can kill exactly
-    // the process this attempt spawned even after this.child is cleared.
+    // Held locally so cleanup can tell whether the state still belongs to this
+    // attempt. A child that dies during startup clears this.child, after which
+    // a later start() can spawn a replacement; without the identity checks the
+    // first attempt's cleanup would discard the newer child and leak it.
     let spawned: ChildProcessWithoutNullStreams | undefined;
 
-    this.starting = (async () => {
+    const attempt = (async () => {
       const { command, args } = resolveOdCommand();
       const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
       spawned = child;
       this.child = child;
+      this.buffer = "";
 
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk: string) => this.handleData(chunk));
@@ -164,17 +167,26 @@ class OdMcpClient {
         if (line) this.lastError = line;
       });
 
-      child.on("exit", () => {
-        const detail = this.lastError ? `: ${this.lastError}` : "";
-        const error = new Error(`[${NAME}] od mcp exited${detail}`);
-        for (const pending of this.pending.values()) {
-          clearTimeout(pending.timer);
-          pending.reject(error);
-        }
-        this.pending.clear();
-        this.child = undefined;
-        this.starting = undefined;
+      // A spawn failure (missing binary, no execute bit, bad OD_NODE) arrives
+      // as an 'error' event. With no listener Node throws it as an unhandled
+      // error and terminates the whole process.
+      child.on("error", (error: Error) => {
+        this.lastError = error.message;
+        this.settleChild(child, `[${NAME}] od mcp failed to start`);
       });
+
+      // Writing to a child that has closed its stdin emits EPIPE
+      // asynchronously. Unhandled, that also terminates the process. The
+      // request itself fails through settleChild, so this listener only
+      // absorbs the event.
+      child.stdin.on("error", () => {});
+
+      // 'close' fires once the stdio streams are drained, so a response
+      // written just before termination is still parsed. 'exit' is kept as a
+      // fallback for a child whose streams stay open, for instance when a
+      // grandchild inherited them.
+      child.on("close", () => this.settleChild(child, `[${NAME}] od mcp exited`));
+      child.on("exit", () => this.settleChild(child, `[${NAME}] od mcp exited`));
 
       await this.request("initialize", {
         protocolVersion: "2024-11-05",
@@ -182,19 +194,48 @@ class OdMcpClient {
         clientInfo: { name: NAME, version: "1.0.0" },
       });
       // A notification, so no response is expected.
-      child.stdin.write(
-        `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
-      );
+      this.write(child, { jsonrpc: "2.0", method: "notifications/initialized" });
     })();
 
+    this.starting = attempt;
     try {
-      await this.starting;
+      await attempt;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
+      if (this.child === spawned) this.child = undefined;
+      if (this.starting === attempt) this.starting = undefined;
       spawned?.kill();
-      this.child = undefined;
-      this.starting = undefined;
       throw error;
+    }
+  }
+
+  /**
+   * Drop the state for one child and fail its in-flight requests.
+   *
+   * Idempotent, and a no-op once a newer child has replaced this one, so a
+   * late 'close' from an old process cannot tear down a live connection.
+   */
+  private settleChild(child: ChildProcessWithoutNullStreams, reason: string): void {
+    if (this.child !== child) return;
+    this.child = undefined;
+    this.starting = undefined;
+    this.buffer = "";
+
+    const error = new Error(this.lastError ? `${reason}: ${this.lastError}` : reason);
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  /** Write one JSON-RPC record, tolerating a stream that has already closed. */
+  private write(child: ChildProcessWithoutNullStreams, message: unknown): void {
+    if (!child.stdin.writable) return;
+    try {
+      child.stdin.write(`${JSON.stringify(message)}\n`);
+    } catch {
+      // The stream is gone. settleChild fails anything still pending.
     }
   }
 
@@ -234,7 +275,7 @@ class OdMcpClient {
         reject(new Error(`[${NAME}] ${method} timed out after ${CALL_TIMEOUT_MS}ms`));
       }, CALL_TIMEOUT_MS);
       this.pending.set(id, { resolve, reject, timer });
-      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      this.write(child, { jsonrpc: "2.0", id, method, params });
     });
   }
 
@@ -265,9 +306,21 @@ class OdMcpClient {
   }
 
   stop(): void {
-    this.child?.kill();
-    this.child = undefined;
+    const child = this.child;
+    if (child) {
+      this.settleChild(child, `[${NAME}] od mcp stopped`);
+      child.kill();
+      return;
+    }
+    // No child, but a start attempt may still be in flight, and any queued
+    // request must not be left waiting on its timeout.
     this.starting = undefined;
+    this.buffer = "";
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error(`[${NAME}] od mcp stopped`));
+    }
+    this.pending.clear();
   }
 }
 
