@@ -61,6 +61,9 @@ my-brand/
 └── metadata.json   { "status": "published" }
 ```
 
+[`examples/my-brand`](examples/my-brand) in this repository is exactly that, and
+it is a working design system: copy it, or read it to see the format filled in.
+
 `metadata.json` is not optional in practice. Without it the design system
 defaults to `draft`, and a draft is skipped at run time with no error at all:
 the artifact comes back in OpenDesign's default style and nothing tells you why.
@@ -70,7 +73,7 @@ picker:
 
 ```bash
 mkdir -p ~/open-design/.od/design-systems/my-brand
-cp DESIGN.md metadata.json ~/open-design/.od/design-systems/my-brand/
+cp examples/my-brand/* ~/open-design/.od/design-systems/my-brand/
 ```
 
 ### Installing from a git repository
@@ -157,7 +160,8 @@ Breakpoints and how layout collapses.
 
 A collection of ready-made examples, extracted from real products, is at
 [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md).
-Any of those files works as-is.
+Any of those files works as-is. The [examples](examples) directory here has a
+short version with the format annotated.
 
 ### Going further
 
@@ -250,7 +254,7 @@ because the MCP `start_run` tool has no `designSystemId` parameter. The daemon
 resolves it with the precedence `request > plugin > project > app default`.
 
 No runtime dependencies. The MCP client is a small newline-delimited JSON-RPC
-implementation rather than the official SDK.
+implementation instead of the official SDK.
 
 ## License
 
