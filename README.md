@@ -14,11 +14,22 @@ run finishes.
 pi install git:github.com/marcodellemarche/pi-opendesign
 ```
 
-OpenDesign has to be running. Either the desktop app, or from a source checkout:
+OpenDesign has to be running. The extension talks to its daemon, which is the
+process that actually spawns your agent.
+
+Either the desktop app, or from a source checkout:
 
 ```bash
-cd ~/open-design && pnpm install && pnpm tools-dev run web
+cd ~/open-design && pnpm install
+nix run nixpkgs#nodejs_24 -- apps/daemon/bin/od.mjs
 ```
+
+That starts the daemon on port 7456, which is where the extension looks by
+default. If OpenDesign is already running on another port, point the extension
+at it with `OD_DAEMON_URL` instead.
+
+Avoid `pnpm tools-dev run web` for this. It is the development server and picks
+a random port for the daemon, so the extension will not find it.
 
 ## Use
 
@@ -242,6 +253,12 @@ ordinary project wins, and a genuine tie is an error.
 
 **Runs fail if the network drops.** The model OpenDesign drives may be remote,
 and an unstable connection kills the stream mid-run.
+
+**The unreachable-daemon error suggests the wrong command.** When the daemon is
+not running, OpenDesign's own error says to start it with `pnpm tools-dev`. That
+is the development server, and it picks a random daemon port, so following the
+advice leaves the extension still unable to connect. Start the daemon directly
+instead, as shown under Install.
 
 ## How it works
 
