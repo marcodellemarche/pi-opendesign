@@ -547,7 +547,18 @@ export default function openDesignExtension(pi: ExtensionAPI) {
 
           if (state === "succeeded") {
             const parts = [`Run ${status.id ?? params.runId}: succeeded`];
-            if (status.previewUrl) parts.push(`\nPreview: ${status.previewUrl}`);
+            if (status.previewUrl) {
+              parts.push(`\nPreview: ${status.previewUrl}`);
+            } else {
+              // A run can succeed without a preview: OpenDesign only builds one
+              // when it considers the deliverable valid, which needs an entry
+              // file. The workspace link still shows the files.
+              parts.push(
+                "\nNo preview link: OpenDesign did not treat the output as a valid " +
+                  "deliverable, usually because the artifact did not declare an entry file. " +
+                  "The workspace link below still shows what was written.",
+              );
+            }
             if (status.studioUrl) parts.push(`\nWorkspace: ${status.studioUrl}`);
             else if (status.projectId) parts.push(`\nWorkspace: ${workspaceLink(status.projectId)}`);
             if (status.agentMessage) parts.push(`\n\n${status.agentMessage}`);

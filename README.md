@@ -126,6 +126,12 @@ and a genuine tie is an error so you can disambiguate.
 remote, and an unstable connection kills the stream mid-run. If runs start
 failing at a steady rate, check the link before suspecting the stack.
 
+**A run can succeed without a preview link.** OpenDesign only builds
+`previewUrl` when it considers the output a valid deliverable, which requires
+the artifact to declare an entry file. A run that writes a differently named
+file can finish as `succeeded` with no preview. The workspace link still shows
+what was written.
+
 **pi does not always call the tool.** For a trivial request it may write the HTML
 itself, which is reasonable when the artifact is a handful of lines. Name the
 tool, or ask for something substantial, when the on-brand pipeline matters.
